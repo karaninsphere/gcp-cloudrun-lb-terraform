@@ -1,0 +1,72 @@
+name: GCP Terraform + Cloud Run Deployment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      PROJECT_ID: ai-project-469011
+      REGION: asia-south1
+      REPO_NAME: docker-repo
+      IMAGE_NAME: cloudrun-app
+      TERRAFORM_DIR: terraform
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY_B64 }}
+        export_default_credentials: true
+
+    - name: Decode GCP JSON Key
+      run: |
+        mkdir -p ${{ github.workspace }}/terraform
+        echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 --decode > ${{ github.workspace }}/terraform/terraform-sa.json
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.5.0
+
+    # -------------------------
+    # Step 1: Create Artifact Registry first
+    # -------------------------
+    - name: Terraform Init & Apply Artifact Registry
+      working-directory: ${{ env.TERRAFORM_DIR }}
+      run: |
+        terraform init
+        terraform apply -auto-approve -target=google_artifact_registry_repository.docker_repo
+
+    # -------------------------
+    # Step 2: Build and push Docker image
+    # -------------------------
+    - name: Configure Docker for GCP Artifact Registry
+      run: |
+        gcloud auth configure-docker ${REGION}-docker.pkg.dev
+
+    - name: Build Docker image
+      run: |
+        docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:v1 ./app
+
+    - name: Push Docker image
+      run: |
+        docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:v1
+
+    # -------------------------
+    # Step 3: Deploy Cloud Run + Load Balancer
+    # -------------------------
+    - name: Terraform Apply All
+      working-directory: ${{ env.TERRAFORM_DIR }}
+      run: |
+        terraform init
+        terraform apply -auto-approve
