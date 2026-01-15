@@ -18,9 +18,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       # 1️⃣ Restore GCP service account JSON
       - name: Decode GCP Service Account Key
         run: |
@@ -36,6 +33,10 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_B64 }}
+      - name: Verify GCP key file
+       run: |
+        ls -l $HOME/gcp-sa.json
+        cat $HOME/gcp-sa.json | jq '.client_email'
 
       # 4️⃣ Configure Docker for Artifact Registry
       - name: Configure Docker auth
