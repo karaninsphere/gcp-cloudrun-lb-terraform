@@ -21,7 +21,7 @@ jobs:
       # 1️⃣ Restore GCP service account JSON
       - name: Decode GCP Service Account Key
         run: |
-          echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 -d > $HOME/gcp-sa.json
+          echo "${{ secrets.GCP_SA_KEY }}" | base64 -d > $HOME/gcp-sa.json
 
       # 2️⃣ Export credentials for Terraform & gcloud
       - name: Set GCP credentials env
