@@ -6,67 +6,64 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  PROJECT_ID: ai-project-469011
+  REGION: asia-south1
+  REPO_NAME: docker-repo
+  IMAGE_NAME: cloudrun-app
+  IMAGE_TAG: v1
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    env:
-      PROJECT_ID: ai-project-469011
-      REGION: asia-south1
-      REPO_NAME: docker-repo
-      IMAGE_NAME: cloudrun-app
-      TERRAFORM_DIR: terraform
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Google Cloud SDK
-      uses: google-github-actions/setup-gcloud@v1
-      with:
-        project_id: ${{ env.PROJECT_ID }}
-        service_account_key: ${{ secrets.GCP_SA_KEY_B64 }}
-        export_default_credentials: true
+      # 1️⃣ Restore GCP service account JSON
+      - name: Decode GCP Service Account Key
+        run: |
+          echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 -d > $HOME/gcp-sa.json
 
-    - name: Decode GCP JSON Key
-      run: |
-        mkdir -p ${{ github.workspace }}/terraform
-        echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 --decode > ${{ github.workspace }}/terraform/terraform-sa.json
+      # 2️⃣ Export credentials for Terraform & gcloud
+      - name: Set GCP credentials env
+        run: |
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/gcp-sa.json" >> $GITHUB_ENV
 
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: 1.5.0
+      # 3️⃣ Authenticate gcloud
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_B64 }}
 
-    # -------------------------
-    # Step 1: Create Artifact Registry first
-    # -------------------------
-    - name: Terraform Init & Apply Artifact Registry
-      working-directory: ${{ env.TERRAFORM_DIR }}
-      run: |
-        terraform init
-        terraform apply -auto-approve -target=google_artifact_registry_repository.docker_repo
+      # 4️⃣ Configure Docker for Artifact Registry
+      - name: Configure Docker auth
+        run: |
+          gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
 
-    # -------------------------
-    # Step 2: Build and push Docker image
-    # -------------------------
-    - name: Configure Docker for GCP Artifact Registry
-      run: |
-        gcloud auth configure-docker ${REGION}-docker.pkg.dev
+      # 5️⃣ Terraform Init
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
 
-    - name: Build Docker image
-      run: |
-        docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:v1 ./app
+      # 6️⃣ Terraform Apply (creates Artifact Registry first)
+      - name: Terraform Apply Infra
+        working-directory: terraform
+        run: terraform apply -auto-approve
 
-    - name: Push Docker image
-      run: |
-        docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:v1
+      # 7️⃣ Build Docker image
+      - name: Build Docker image
+        working-directory: app
+        run: |
+          docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG} .
 
-    # -------------------------
-    # Step 3: Deploy Cloud Run + Load Balancer
-    # -------------------------
-    - name: Terraform Apply All
-      working-directory: ${{ env.TERRAFORM_DIR }}
-      run: |
-        terraform init
-        terraform apply -auto-approve
+      # 8️⃣ Push Docker image
+      - name: Push Docker image
+        run: |
+          docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}
+
+      # 9️⃣ Redeploy Cloud Run with image
+      - name: Terraform Apply Cloud Run
+        working-directory: terraform
+        run: terraform apply -auto-approve
